@@ -6,6 +6,7 @@ import { AddItemForm } from "@/components/AddItemForm";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { groupByCategory } from "@/lib/groupByCategory";
 
 const Index = () => {
   const {
@@ -71,7 +72,7 @@ const Index = () => {
           </TabsList>
 
           {/* Shopping List */}
-          <TabsContent value="shopping" className="space-y-2 mt-0">
+          <TabsContent value="shopping" className="space-y-4 mt-0">
             {shoppingList.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 text-center">
                 <div className="rounded-full bg-muted p-4 mb-3">
@@ -82,17 +83,28 @@ const Index = () => {
               </div>
             ) : (
               <>
-                {shoppingList
-                  .sort((a, b) => Number(a.checked) - Number(b.checked))
-                  .map((item) => (
-                    <ShoppingListItem
-                      key={item.id}
-                      item={item}
-                      onToggleCheck={toggleChecked}
-                      onMarkPurchased={markPurchased}
-                      onRemove={(id) => toggleShoppingList(id)}
-                    />
-                  ))}
+                {groupByCategory(shoppingList).map((group) => (
+                  <div key={group.category}>
+                    <div className="flex items-center gap-2 mb-2 mt-1">
+                      <span className="text-base">{group.emoji}</span>
+                      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{group.category}</h3>
+                      <div className="flex-1 h-px bg-border" />
+                    </div>
+                    <div className="space-y-2">
+                      {group.items
+                        .sort((a, b) => Number(a.checked) - Number(b.checked))
+                        .map((item) => (
+                          <ShoppingListItem
+                            key={item.id}
+                            item={item}
+                            onToggleCheck={toggleChecked}
+                            onMarkPurchased={markPurchased}
+                            onRemove={(id) => toggleShoppingList(id)}
+                          />
+                        ))}
+                    </div>
+                  </div>
+                ))}
                 {shoppingList.some((i) => i.checked) && (
                   <Button
                     variant="outline"
@@ -111,21 +123,28 @@ const Index = () => {
           </TabsContent>
 
           {/* Pantry */}
-          <TabsContent value="pantry" className="mt-0">
-            <div className="grid grid-cols-2 gap-3">
-              {pantryItems.map((item) => (
-                <PantryItemCard
-                  key={item.id}
-                  item={item}
-                  onUpdateQuantity={(id, qty) => updateItem(id, { quantity: qty })}
-                  onAddToList={toggleShoppingList}
-                  onRemove={removeItem}
-                />
-              ))}
-            </div>
-            <div className="mt-3">
-              <AddItemForm onAdd={addItem} />
-            </div>
+          <TabsContent value="pantry" className="space-y-4 mt-0">
+            {groupByCategory(pantryItems).map((group) => (
+              <div key={group.category}>
+                <div className="flex items-center gap-2 mb-2 mt-1">
+                  <span className="text-base">{group.emoji}</span>
+                  <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{group.category}</h3>
+                  <div className="flex-1 h-px bg-border" />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  {group.items.map((item) => (
+                    <PantryItemCard
+                      key={item.id}
+                      item={item}
+                      onUpdateQuantity={(id, qty) => updateItem(id, { quantity: qty })}
+                      onAddToList={toggleShoppingList}
+                      onRemove={removeItem}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
+            <AddItemForm onAdd={addItem} />
           </TabsContent>
         </Tabs>
       </main>
