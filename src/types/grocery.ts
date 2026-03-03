@@ -10,42 +10,51 @@ export interface GroceryItem {
   lastPurchased?: Date;
 }
 
-export type Category = 
-  | "Fruits & Vegetables"
-  | "Dairy & Eggs"
-  | "Legumes & Protein"
-  | "Bakery"
-  | "Pantry Staples"
+export type Category =
+  | "Rice & Millets"
+  | "Dals & Lentils"
+  | "Vegetables"
+  | "Fruits"
+  | "Dairy"
+  | "Spices & Masala"
+  | "Oil & Ghee"
+  | "Coconut & Chutneys"
+  | "Flours & Grains"
+  | "Snacks & Sweets"
   | "Beverages"
-  | "Snacks"
-  | "Frozen"
   | "Household"
   | "Other";
 
 export const CATEGORIES: Category[] = [
-  "Fruits & Vegetables",
-  "Dairy & Eggs",
-  "Legumes & Protein",
-  "Bakery",
-  "Pantry Staples",
+  "Rice & Millets",
+  "Dals & Lentils",
+  "Vegetables",
+  "Fruits",
+  "Dairy",
+  "Spices & Masala",
+  "Oil & Ghee",
+  "Coconut & Chutneys",
+  "Flours & Grains",
+  "Snacks & Sweets",
   "Beverages",
-  "Snacks",
-  "Frozen",
   "Household",
   "Other",
 ];
 
 export const CATEGORY_EMOJI: Record<Category, string> = {
-  "Fruits & Vegetables": "🥬",
-  "Dairy & Eggs": "🥛",
-  "Legumes & Protein": "🫘",
-  "Bakery": "🍞",
-  "Pantry Staples": "🫙",
+  "Rice & Millets": "🍚",
+  "Dals & Lentils": "🫘",
+  "Vegetables": "🥬",
+  "Fruits": "🍌",
+  "Dairy": "🥛",
+  "Spices & Masala": "🌶️",
+  "Oil & Ghee": "🫒",
+  "Coconut & Chutneys": "🥥",
+  "Flours & Grains": "🌾",
+  "Snacks & Sweets": "🍿",
   "Beverages": "☕",
-  "Snacks": "🍿",
-  "Frozen": "🧊",
   "Household": "🧹",
   "Other": "📦",
 };
 
-export const UNITS = ["pcs", "kg", "g", "L", "ml", "dozen", "pack", "bottle", "can", "bag"];
+export const UNITS = ["kg", "g", "L", "ml", "pcs", "dozen", "pack", "bottle", "bundle", "bag"];
