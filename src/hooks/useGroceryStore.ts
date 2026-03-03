@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import { GroceryItem } from "@/types/grocery";
 
-const STORAGE_KEY = "grocery-tracker-items";
+const STORAGE_KEY = "grocery-manager-items";
 
 const loadItems = (): GroceryItem[] => {
   try {
