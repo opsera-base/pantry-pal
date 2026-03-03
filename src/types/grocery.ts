@@ -13,7 +13,7 @@ export interface GroceryItem {
 export type Category = 
   | "Fruits & Vegetables"
   | "Dairy & Eggs"
-  | "Meat & Seafood"
+  | "Legumes & Protein"
   | "Bakery"
   | "Pantry Staples"
   | "Beverages"
@@ -25,7 +25,7 @@ export type Category =
 export const CATEGORIES: Category[] = [
   "Fruits & Vegetables",
   "Dairy & Eggs",
-  "Meat & Seafood",
+  "Legumes & Protein",
   "Bakery",
   "Pantry Staples",
   "Beverages",
@@ -38,7 +38,7 @@ export const CATEGORIES: Category[] = [
 export const CATEGORY_EMOJI: Record<Category, string> = {
   "Fruits & Vegetables": "🥬",
   "Dairy & Eggs": "🥛",
-  "Meat & Seafood": "🥩",
+  "Legumes & Protein": "🫘",
   "Bakery": "🍞",
   "Pantry Staples": "🫙",
   "Beverages": "☕",

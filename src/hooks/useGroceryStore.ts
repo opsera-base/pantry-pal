@@ -23,7 +23,7 @@ function getDefaultItems(): GroceryItem[] {
     { id: "3", name: "Bananas", category: "Fruits & Vegetables", quantity: 0, unit: "pcs", minQuantity: 4, inShoppingList: true, checked: false },
     { id: "4", name: "Bread", category: "Bakery", quantity: 1, unit: "pcs", minQuantity: 1, inShoppingList: false, checked: false },
     { id: "5", name: "Rice", category: "Pantry Staples", quantity: 2, unit: "kg", minQuantity: 1, inShoppingList: false, checked: false },
-    { id: "6", name: "Chicken Breast", category: "Meat & Seafood", quantity: 0, unit: "kg", minQuantity: 1, inShoppingList: true, checked: false },
+    { id: "6", name: "Paneer", category: "Dairy & Eggs", quantity: 0, unit: "pcs", minQuantity: 1, inShoppingList: true, checked: false },
     { id: "7", name: "Olive Oil", category: "Pantry Staples", quantity: 1, unit: "bottle", minQuantity: 1, inShoppingList: false, checked: false },
     { id: "8", name: "Tomatoes", category: "Fruits & Vegetables", quantity: 0, unit: "kg", minQuantity: 1, inShoppingList: true, checked: false },
   ];
