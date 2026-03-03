@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { GroceryItem, Category } from "@/types/grocery";
+import { GroceryItem } from "@/types/grocery";
 
 const STORAGE_KEY = "grocery-tracker-items";
 
@@ -18,14 +18,56 @@ const saveItems = (items: GroceryItem[]) => {
 
 function getDefaultItems(): GroceryItem[] {
   return [
-    { id: "1", name: "Milk", category: "Dairy & Eggs", quantity: 1, unit: "L", minQuantity: 1, inShoppingList: false, checked: false },
-    { id: "2", name: "Eggs", category: "Dairy & Eggs", quantity: 6, unit: "pcs", minQuantity: 6, inShoppingList: false, checked: false },
-    { id: "3", name: "Bananas", category: "Fruits & Vegetables", quantity: 0, unit: "pcs", minQuantity: 4, inShoppingList: true, checked: false },
-    { id: "4", name: "Bread", category: "Bakery", quantity: 1, unit: "pcs", minQuantity: 1, inShoppingList: false, checked: false },
-    { id: "5", name: "Rice", category: "Pantry Staples", quantity: 2, unit: "kg", minQuantity: 1, inShoppingList: false, checked: false },
-    { id: "6", name: "Paneer", category: "Dairy & Eggs", quantity: 0, unit: "pcs", minQuantity: 1, inShoppingList: true, checked: false },
-    { id: "7", name: "Olive Oil", category: "Pantry Staples", quantity: 1, unit: "bottle", minQuantity: 1, inShoppingList: false, checked: false },
-    { id: "8", name: "Tomatoes", category: "Fruits & Vegetables", quantity: 0, unit: "kg", minQuantity: 1, inShoppingList: true, checked: false },
+    // Rice & Millets
+    { id: "1", name: "Ponni Raw Rice", category: "Rice & Millets", quantity: 5, unit: "kg", minQuantity: 3, inShoppingList: false, checked: false },
+    { id: "2", name: "Idli Rice", category: "Rice & Millets", quantity: 2, unit: "kg", minQuantity: 2, inShoppingList: false, checked: false },
+    { id: "3", name: "Ragi Flour", category: "Rice & Millets", quantity: 1, unit: "kg", minQuantity: 1, inShoppingList: false, checked: false },
+
+    // Dals & Lentils
+    { id: "4", name: "Toor Dal", category: "Dals & Lentils", quantity: 1, unit: "kg", minQuantity: 1, inShoppingList: false, checked: false },
+    { id: "5", name: "Urad Dal (whole)", category: "Dals & Lentils", quantity: 1, unit: "kg", minQuantity: 1, inShoppingList: false, checked: false },
+    { id: "6", name: "Moong Dal", category: "Dals & Lentils", quantity: 0, unit: "kg", minQuantity: 1, inShoppingList: true, checked: false },
+    { id: "7", name: "Chana Dal", category: "Dals & Lentils", quantity: 1, unit: "kg", minQuantity: 1, inShoppingList: false, checked: false },
+
+    // Vegetables
+    { id: "8", name: "Drumstick", category: "Vegetables", quantity: 0, unit: "bundle", minQuantity: 1, inShoppingList: true, checked: false },
+    { id: "9", name: "Curry Leaves", category: "Vegetables", quantity: 1, unit: "bundle", minQuantity: 1, inShoppingList: false, checked: false },
+    { id: "10", name: "Tomatoes", category: "Vegetables", quantity: 0, unit: "kg", minQuantity: 1, inShoppingList: true, checked: false },
+    { id: "11", name: "Onions", category: "Vegetables", quantity: 2, unit: "kg", minQuantity: 2, inShoppingList: false, checked: false },
+    { id: "12", name: "Green Chillies", category: "Vegetables", quantity: 100, unit: "g", minQuantity: 100, inShoppingList: false, checked: false },
+    { id: "13", name: "Brinjal", category: "Vegetables", quantity: 0, unit: "kg", minQuantity: 1, inShoppingList: true, checked: false },
+
+    // Dairy
+    { id: "14", name: "Milk", category: "Dairy", quantity: 2, unit: "L", minQuantity: 2, inShoppingList: false, checked: false },
+    { id: "15", name: "Curd", category: "Dairy", quantity: 1, unit: "kg", minQuantity: 1, inShoppingList: false, checked: false },
+    { id: "16", name: "Paneer", category: "Dairy", quantity: 0, unit: "pcs", minQuantity: 1, inShoppingList: true, checked: false },
+
+    // Spices & Masala
+    { id: "17", name: "Mustard Seeds", category: "Spices & Masala", quantity: 200, unit: "g", minQuantity: 100, inShoppingList: false, checked: false },
+    { id: "18", name: "Turmeric Powder", category: "Spices & Masala", quantity: 100, unit: "g", minQuantity: 100, inShoppingList: false, checked: false },
+    { id: "19", name: "Sambar Powder", category: "Spices & Masala", quantity: 0, unit: "g", minQuantity: 200, inShoppingList: true, checked: false },
+    { id: "20", name: "Rasam Powder", category: "Spices & Masala", quantity: 100, unit: "g", minQuantity: 100, inShoppingList: false, checked: false },
+
+    // Oil & Ghee
+    { id: "21", name: "Gingelly Oil", category: "Oil & Ghee", quantity: 1, unit: "L", minQuantity: 1, inShoppingList: false, checked: false },
+    { id: "22", name: "Ghee", category: "Oil & Ghee", quantity: 500, unit: "ml", minQuantity: 500, inShoppingList: false, checked: false },
+    { id: "23", name: "Coconut Oil", category: "Oil & Ghee", quantity: 1, unit: "L", minQuantity: 1, inShoppingList: false, checked: false },
+
+    // Coconut & Chutneys
+    { id: "24", name: "Fresh Coconut", category: "Coconut & Chutneys", quantity: 2, unit: "pcs", minQuantity: 2, inShoppingList: false, checked: false },
+    { id: "25", name: "Coconut Chutney Powder", category: "Coconut & Chutneys", quantity: 0, unit: "g", minQuantity: 200, inShoppingList: true, checked: false },
+    { id: "26", name: "Tamarind", category: "Coconut & Chutneys", quantity: 200, unit: "g", minQuantity: 200, inShoppingList: false, checked: false },
+
+    // Flours
+    { id: "27", name: "Rava (Sooji)", category: "Flours & Grains", quantity: 1, unit: "kg", minQuantity: 1, inShoppingList: false, checked: false },
+    { id: "28", name: "Wheat Flour (Atta)", category: "Flours & Grains", quantity: 2, unit: "kg", minQuantity: 2, inShoppingList: false, checked: false },
+
+    // Beverages
+    { id: "29", name: "Filter Coffee Powder", category: "Beverages", quantity: 200, unit: "g", minQuantity: 200, inShoppingList: false, checked: false },
+    { id: "30", name: "Tea Powder", category: "Beverages", quantity: 100, unit: "g", minQuantity: 100, inShoppingList: false, checked: false },
+
+    // Fruits
+    { id: "31", name: "Bananas", category: "Fruits", quantity: 0, unit: "dozen", minQuantity: 1, inShoppingList: true, checked: false },
   ];
 }
 
