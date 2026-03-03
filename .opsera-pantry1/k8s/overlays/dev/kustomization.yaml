@@ -13,8 +13,8 @@ resources:
 # RULE 131 & 234: Kustomize image transformer
 # - name: PLACEHOLDER_ECR_URI  ← NEVER changes (matches deployment.yaml image name)
 # - newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/opsera/pantry1 ← CI/CD replaces ONLY this field with actual ECR URI
-# - newTag: dev-d34e893a-20260303081543
+# - newTag: dev-778942a4-20260303192835
 images:
   - name: PLACEHOLDER_ECR_URI
     newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/opsera/pantry1
-    newTag: dev-d34e893a-20260303081543
+    newTag: dev-778942a4-20260303192835
