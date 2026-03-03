@@ -1,0 +1,31 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pantry1-dev
+  namespace: opsera-pantry1-dev
+  labels:
+    app: pantry1
+    tenant: opsera
+    environment: dev
+    managed-by: opsera-c2c
+  annotations:
+    # RULE 231: BOTH annotation AND ingressClassName required
+    # RULE 233: NO TLS config, cert-manager, or ssl-redirect annotations
+    # HTTPS is handled at Ingress Controller level via ACM wildcard cert
+    kubernetes.io/ingress.class: nginx
+    argocd.argoproj.io/sync-wave: "3"
+    argocd.argoproj.io/sync-options: SkipHealthCheck=true
+spec:
+  # RULE 231: BOTH ingressClassName AND annotation required for compatibility
+  ingressClassName: nginx
+  rules:
+    - host: pantry1-dev.agent.opsera.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: pantry1
+                port:
+                  number: 80

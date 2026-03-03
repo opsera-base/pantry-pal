@@ -1,0 +1,38 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: opsera-pantry1-dev
+  namespace: argocd
+  labels:
+    tenant: opsera
+    app: pantry1
+    environment: dev
+    managed-by: opsera-c2c
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/opsera-base/pantry-pal.git
+    # RULE 155: targetRevision MUST match working branch
+    targetRevision: main
+    path: .opsera-pantry1/k8s/overlays/dev
+  destination:
+    # RULE 149: Use destination.name (spoke cluster), NEVER destination.server
+    name: opsera-usw2-np
+    namespace: opsera-pantry1-dev
+  syncPolicy:
+    # RULE 213: Auto-sync disabled for first deployment (race condition prevention)
+    # Stage 9 of CI/CD performs first manual sync after hard refresh
+    # To enable auto-sync later:
+    #   kubectl patch application opsera-pantry1-dev -n argocd --type merge \
+    #     -p '{"spec":{"syncPolicy":{"automated":{"prune":false,"selfHeal":true}}}}'
+    automated: null
+    syncOptions:
+      - CreateNamespace=true
+      # RULE 109: Use Replace=true
+      - Replace=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

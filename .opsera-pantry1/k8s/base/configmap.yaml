@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pantry1-config
+  namespace: opsera-pantry1-dev
+  labels:
+    app: pantry1
+    tenant: opsera
+    managed-by: opsera-c2c
+data:
+  # Shared configuration values (same across all environments)
+  # Environment-specific values are set via container env in each overlay
+  APP_NAME: "pantry1"
+  TENANT: "opsera"

@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: pantry1
+  namespace: opsera-pantry1-dev
+  labels:
+    app: pantry1
+    tenant: opsera
+    environment: dev
+    managed-by: opsera-c2c
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  type: ClusterIP
+  selector:
+    app: pantry1
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      protocol: TCP

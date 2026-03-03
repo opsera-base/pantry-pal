@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# RULE 208: Reference base as directory, NEVER individual files
+namespace: opsera-pantry1-dev
+
+resources:
+  - ../../base
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+
+# RULE 131 & 234: Kustomize image transformer
+# - name: PLACEHOLDER_ECR_URI  ← NEVER changes (matches deployment.yaml image name)
+# - newName: PLACEHOLDER_ECR_URI ← CI/CD replaces ONLY this field with actual ECR URI
+# - newTag: dev-latest ← CI/CD replaces this with timestamped tag (dev-{sha}-{ts})
+images:
+  - name: PLACEHOLDER_ECR_URI
+    newName: PLACEHOLDER_ECR_URI
+    newTag: dev-latest
