@@ -1,0 +1,9 @@
+node_modules
+.git
+.github
+.opsera-pantry-pal/k8s
+.opsera-pantry-pal/argocd
+dist
+*.md
+.env*
+.vscode
