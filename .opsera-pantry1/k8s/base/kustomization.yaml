@@ -1,9 +1,0 @@
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-
-# RULE 207: Base contains ONLY shared resources (namespace, SA, configmap)
-# Deployment, Service, Ingress are in overlays (environment-specific)
-resources:
-  - namespace.yaml
-  - serviceaccount.yaml
-  - configmap.yaml
