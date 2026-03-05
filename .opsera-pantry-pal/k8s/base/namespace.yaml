@@ -1,8 +1,0 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: opsera-pantry-pal-dev
-  labels:
-    app: pantry-pal
-    tenant: opsera
-    environment: dev

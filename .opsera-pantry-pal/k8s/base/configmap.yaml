@@ -1,9 +1,0 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: pantry-pal-config
-  labels:
-    app: pantry-pal
-    tenant: opsera
-data:
-  ENVIRONMENT: "dev"
