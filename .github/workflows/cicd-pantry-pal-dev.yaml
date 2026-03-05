@@ -7,6 +7,7 @@ on:
       - '.opsera-pantry-pal/**'
       - '!.opsera-pantry-pal/k8s/**'
       - '!.opsera-pantry-pal/argocd/**'
+      - '!.opsera-pantry-pal/opsera-config.yaml'
       - 'src/**'
       - 'package.json'
       - 'package-lock.json'
