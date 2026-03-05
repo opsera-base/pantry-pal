@@ -20,3 +20,29 @@ environments:
     hostname: pantry-pal-dev.agent.opsera.dev
     strategy: rolling
     replicas: 2
+  - name: qa
+    namespace: opsera-pantry-pal-qa
+    hostname: pantry-pal-qa.agent.opsera.dev
+    strategy: canary
+    replicas: 2
+    canary_steps: [20, 50, 100]
+    monitoring: prometheus+newrelic
+  - name: staging
+    namespace: opsera-pantry-pal-staging
+    hostname: pantry-pal-staging.agent.opsera.dev
+    strategy: blue-green
+    replicas: 2
+    auto_promotion: false
+    monitoring: health-check
+
+integrations:
+  monitoring:
+    prometheus:
+      url: http://prometheus-server.monitoring.svc.cluster.local:9090
+    newrelic:
+      region: us
+      account_id_var: NEWRELIC_ACCOUNT_ID
+  notifications:
+    slack: enabled
+  tracking:
+    jira: enabled

@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: opsera-pantry-pal-staging
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/opsera-base/pantry-pal.git
+    targetRevision: main
+    path: .opsera-pantry-pal/k8s/overlays/staging
+  destination:
+    name: opsera-usw2-np
+    namespace: opsera-pantry-pal-staging
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

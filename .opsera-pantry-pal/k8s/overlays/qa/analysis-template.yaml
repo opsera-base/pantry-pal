@@ -1,0 +1,41 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: pantry-pal-canary-analysis
+spec:
+  args:
+    - name: newrelic-account-id
+      value: "0"  # Override via GitHub Variable NEWRELIC_ACCOUNT_ID
+  metrics:
+    - name: prometheus-error-rate
+      interval: 30s
+      count: 5
+      failureLimit: 3
+      provider:
+        prometheus:
+          address: "http://prometheus-server.monitoring.svc.cluster.local:9090"
+          query: |
+            sum(rate(http_requests_total{job="pantry-pal-qa",status=~"5.."}[2m]))
+            /
+            sum(rate(http_requests_total{job="pantry-pal-qa"}[2m])) * 100
+      successCondition: "result < 5"
+    - name: newrelic-error-rate
+      interval: 60s
+      count: 3
+      failureLimit: 3
+      provider:
+        newRelic:
+          profile: "newrelic-profile"
+          accountId: "{{args.newrelic-account-id}}"
+          query: "SELECT percentage(count(*), WHERE error IS true) FROM Transaction WHERE appName='pantry-pal-qa' SINCE 2 MINUTES AGO"
+      successCondition: "result < 5"
+    - name: newrelic-latency-p95
+      interval: 60s
+      count: 3
+      failureLimit: 3
+      provider:
+        newRelic:
+          profile: "newrelic-profile"
+          accountId: "{{args.newrelic-account-id}}"
+          query: "SELECT percentile(duration, 95) FROM Transaction WHERE appName='pantry-pal-qa' SINCE 2 MINUTES AGO"
+      successCondition: "result < 0.5"

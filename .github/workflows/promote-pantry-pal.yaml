@@ -1,0 +1,209 @@
+name: "Promote pantry-pal"
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_env:
+        description: "Source environment (where image currently runs)"
+        required: true
+        type: choice
+        options:
+          - dev
+          - qa
+      target_env:
+        description: "Target environment to promote to"
+        required: true
+        type: choice
+        options:
+          - qa
+          - staging
+      action:
+        description: "Action to perform on target (staging Blue-Green only)"
+        required: false
+        default: "deploy"
+        type: choice
+        options:
+          - deploy
+          - promote
+          - abort
+
+env:
+  APP_NAME: pantry-pal
+  TENANT: opsera
+  AWS_REGION: us-west-2
+  HUB_CLUSTER: argocd-usw2
+  SPOKE_CLUSTER: opsera-usw2-np
+
+jobs:
+  get-current-image:
+    name: "Stage 1 - Detect Current Image Tag"
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.detect.outputs.image_tag }}
+      ecr_uri: ${{ steps.detect.outputs.ecr_uri }}
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: "latest"
+
+      - name: Install Argo Rollouts Plugin
+        run: |
+          curl -LO https://github.com/argoproj/argo-rollouts/releases/latest/download/kubectl-argo-rollouts-linux-amd64
+          chmod +x kubectl-argo-rollouts-linux-amd64
+          sudo mv kubectl-argo-rollouts-linux-amd64 /usr/local/bin/kubectl-argo-rollouts
+
+      - name: Setup Spoke Kubeconfig
+        run: |
+          aws eks update-kubeconfig --name ${{ env.SPOKE_CLUSTER }} --region ${{ env.AWS_REGION }}
+
+      - name: Detect Current Image Tag from Source
+        id: detect
+        run: |
+          SOURCE_NS="${{ env.TENANT }}-${{ env.APP_NAME }}-${{ inputs.source_env }}"
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ECR_URI="${ACCOUNT_ID}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.TENANT }}/${{ env.APP_NAME }}"
+
+          # Try Rollout first, fall back to Deployment
+          if kubectl-argo-rollouts get rollout ${{ env.APP_NAME }} -n ${SOURCE_NS} &>/dev/null; then
+            IMAGE_TAG=$(kubectl-argo-rollouts get rollout ${{ env.APP_NAME }} -n ${SOURCE_NS} \
+              -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d: -f2)
+          else
+            IMAGE_TAG=$(kubectl get deployment ${{ env.APP_NAME }} -n ${SOURCE_NS} \
+              -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d: -f2)
+          fi
+
+          echo "Detected image tag from ${{ inputs.source_env }}: ${IMAGE_TAG}"
+          echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "ecr_uri=${ECR_URI}" >> $GITHUB_OUTPUT
+
+      - name: Notify Slack - Promotion Started
+        run: |
+          curl -s -X POST "${{ secrets.SLACK_WEBHOOK_URL }}" \
+            -H 'Content-Type: application/json' \
+            -d "{\"text\":\":arrow_up: *${{ env.APP_NAME }}* promotion started\n${{ inputs.source_env }} → ${{ inputs.target_env }}\nImage: \`${{ steps.detect.outputs.image_tag }}\`\nTriggered by: ${{ github.actor }}\"}" || true
+
+  promote-blue-green:
+    name: "Stage 2 - Promote Blue-Green (Staging)"
+    needs: [get-current-image]
+    if: inputs.target_env == 'staging' && inputs.action == 'promote'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: "latest"
+
+      - name: Install Argo Rollouts Plugin
+        run: |
+          curl -LO https://github.com/argoproj/argo-rollouts/releases/latest/download/kubectl-argo-rollouts-linux-amd64
+          chmod +x kubectl-argo-rollouts-linux-amd64
+          sudo mv kubectl-argo-rollouts-linux-amd64 /usr/local/bin/kubectl-argo-rollouts
+
+      - name: Setup Spoke Kubeconfig
+        run: |
+          aws eks update-kubeconfig --name ${{ env.SPOKE_CLUSTER }} --region ${{ env.AWS_REGION }}
+
+      - name: Promote Blue-Green Rollout
+        run: |
+          NAMESPACE="${{ env.TENANT }}-${{ env.APP_NAME }}-staging"
+          kubectl-argo-rollouts promote ${{ env.APP_NAME }} -n ${NAMESPACE}
+          echo "Promoted blue-green rollout in ${NAMESPACE}"
+
+      - name: Wait for Promotion Complete
+        run: |
+          NAMESPACE="${{ env.TENANT }}-${{ env.APP_NAME }}-staging"
+
+          for i in $(seq 1 30); do
+            STATUS=$(kubectl-argo-rollouts get rollout ${{ env.APP_NAME }} -n ${NAMESPACE} \
+              -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
+
+            echo "[$i/30] Status: ${STATUS}"
+
+            if [ "$STATUS" = "Healthy" ]; then
+              echo "Blue-green promotion completed"
+              break
+            fi
+
+            sleep 10
+          done
+
+          kubectl-argo-rollouts get rollout ${{ env.APP_NAME }} -n ${NAMESPACE}
+
+      - name: Notify Slack - Promotion Complete
+        run: |
+          curl -s -X POST "${{ secrets.SLACK_WEBHOOK_URL }}" \
+            -H 'Content-Type: application/json' \
+            -d "{\"text\":\":white_check_mark: *${{ env.APP_NAME }}* blue-green promotion *succeeded*\nImage: \`${{ needs.get-current-image.outputs.image_tag }}\`\nURL: https://pantry-pal-staging.agent.opsera.dev\"}" || true
+
+  deploy-to-target:
+    name: "Stage 2 - Deploy to Target Environment"
+    needs: [get-current-image]
+    if: inputs.action == 'deploy'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Target CI/CD Workflow
+        run: |
+          TARGET="${{ inputs.target_env }}"
+          IMAGE_TAG="${{ needs.get-current-image.outputs.image_tag }}"
+
+          echo "Promoting image ${IMAGE_TAG} from ${{ inputs.source_env }} to ${TARGET}"
+
+          gh workflow run "cicd-pantry-pal-${TARGET}.yaml" \
+            --field image_tag="${IMAGE_TAG}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  abort-rollout:
+    name: "Stage 2 - Abort Rollout (Staging)"
+    needs: [get-current-image]
+    if: inputs.target_env == 'staging' && inputs.action == 'abort'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: "latest"
+
+      - name: Install Argo Rollouts Plugin
+        run: |
+          curl -LO https://github.com/argoproj/argo-rollouts/releases/latest/download/kubectl-argo-rollouts-linux-amd64
+          chmod +x kubectl-argo-rollouts-linux-amd64
+          sudo mv kubectl-argo-rollouts-linux-amd64 /usr/local/bin/kubectl-argo-rollouts
+
+      - name: Setup Spoke Kubeconfig
+        run: |
+          aws eks update-kubeconfig --name ${{ env.SPOKE_CLUSTER }} --region ${{ env.AWS_REGION }}
+
+      - name: Abort Rollout
+        run: |
+          NAMESPACE="${{ env.TENANT }}-${{ env.APP_NAME }}-staging"
+          kubectl-argo-rollouts abort ${{ env.APP_NAME }} -n ${NAMESPACE}
+          echo "Aborted rollout in ${NAMESPACE} — rolled back to previous active"
+
+      - name: Notify Slack - Rollout Aborted
+        run: |
+          curl -s -X POST "${{ secrets.SLACK_WEBHOOK_URL }}" \
+            -H 'Content-Type: application/json' \
+            -d "{\"text\":\":warning: *${{ env.APP_NAME }}* staging rollout *aborted* — rolled back to previous active\nTriggered by: ${{ github.actor }}\"}" || true

@@ -1,0 +1,69 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: pantry-pal
+  labels:
+    app: pantry-pal
+    tenant: opsera
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: pantry-pal
+  template:
+    metadata:
+      labels:
+        app: pantry-pal
+        tenant: opsera
+    spec:
+      serviceAccountName: pantry-pal
+      imagePullSecrets:
+        - name: ecr-pull-secret
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+      containers:
+        - name: pantry-pal
+          image: pantry-pal:v1.0.0
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: pantry-pal-config
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          startupProbe:
+            httpGet:
+              path: /
+              port: 8080
+            failureThreshold: 30
+            periodSeconds: 2
+  strategy:
+    blueGreen:
+      activeService: pantry-pal-active
+      previewService: pantry-pal-preview
+      autoPromotionEnabled: false  # RULE 133: manual promotion required
+      scaleDownDelaySeconds: 30
+      prePromotionAnalysis:
+        templates:
+          - templateName: pantry-pal-health-check
