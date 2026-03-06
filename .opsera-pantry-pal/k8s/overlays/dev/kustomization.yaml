@@ -20,8 +20,8 @@ labels:
 # CI/CD Stage 6 updates newName and newTag fields
 images:
   - name: PLACEHOLDER_ECR_URI
-    newName: PLACEHOLDER_ECR_URI
-    newTag: v1.0.0
+    newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/opsera/pantry-pal
+    newTag: dev-65423a4e-20260306034105
 
 # Environment-specific replica count
 replicas:
