@@ -303,8 +303,7 @@ jobs:
         with:
           name: docker-image
 
-      - name: Load and Push to ECR
-        id: push
+      - name: Load Image Artifact
         run: |
           # RULE 219: Dynamic artifact detection
           ARTIFACT=$(find . -name "*.tar" | head -1)
