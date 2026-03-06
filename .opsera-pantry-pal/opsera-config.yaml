@@ -1,0 +1,37 @@
+app_name: pantry-pal
+tenant: opsera
+cloud_provider: aws
+region: us-west-2
+region_short: usw2
+branch: main
+setup_mode: quick
+
+clusters:
+  hub: argocd-usw2
+  spoke: opsera-usw2-np
+  argocd_server: argocd-usw2.agent.opsera.dev
+
+ecr:
+  repository: opsera/pantry-pal
+
+environments:
+  - name: dev
+    namespace: opsera-pantry-pal-dev
+    ingress_host: pantry-pal-dev.agent.opsera.dev
+    deployment_strategy: rolling
+    replicas: 1
+
+application:
+  language: nodejs
+  framework: vite-react
+  port: 8080
+  health_check_path: /
+
+integrations:
+  security_scanning: warn
+  sonarqube: skip
+  slack: skip
+  jira: skip
+  prometheus: skip
+  newrelic: skip
+  datadog: skip

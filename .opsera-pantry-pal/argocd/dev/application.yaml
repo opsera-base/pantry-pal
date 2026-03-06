@@ -1,0 +1,29 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: opsera-pantry-pal-dev
+  namespace: argocd
+  labels:
+    app: pantry-pal
+    tenant: opsera
+    environment: dev
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/opsera-base/pantry-pal.git
+    # RULE 14: ALL environments use main branch (targetRevision: main)
+    targetRevision: main
+    path: .opsera-pantry-pal/k8s/overlays/dev
+  destination:
+    # RULE 149: Use destination.name (spoke cluster), NOT destination.server
+    # RULE 217: Dynamic cluster name based on environment
+    name: opsera-usw2-np
+    namespace: opsera-pantry-pal-dev
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # RULE 109: Replace=true syncPolicy
+      - Replace=true
+      - CreateNamespace=true

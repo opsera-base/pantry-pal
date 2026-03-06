@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pantry-pal
+  # NO namespace field in base (INV-003)
+  labels:
+    app: pantry-pal
+    tenant: opsera
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pantry-pal
+  template:
+    metadata:
+      labels:
+        app: pantry-pal
+        tenant: opsera
+    spec:
+      serviceAccountName: pantry-pal
+      # RULE 81: imagePullSecrets required for private ECR
+      imagePullSecrets:
+        - name: ecr-pull-secret
+      securityContext:
+        # RULE 156: runAsNonRoot: true requires explicit runAsUser
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+      containers:
+        - name: pantry-pal
+          # RULE 194: Use simple image name (kustomize replaces via overlay)
+          # RULE 199: PLACEHOLDER_ECR_URI - kustomize overlays replace this
+          image: PLACEHOLDER_ECR_URI
+          # RULE 80: imagePullPolicy Always for reliable updates
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          readinessProbe:
+            httpGet:
+              # RULE 79: SPA health check is /
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20

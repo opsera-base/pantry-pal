@@ -1,0 +1,29 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Inject namespace for all resources in this overlay
+namespace: opsera-pantry-pal-dev
+
+resources:
+  - ../../base
+  - namespace.yaml    # New resource not in base
+
+# RULE 106: Use labels with includeSelectors: false (NEVER commonLabels)
+labels:
+  - pairs:
+      app: pantry-pal
+      environment: dev
+      tenant: opsera
+    includeSelectors: false
+
+# RULE 194: Kustomize image transformer pattern (NEVER placeholders in deployment.yaml)
+# CI/CD Stage 6 updates newName and newTag fields
+images:
+  - name: PLACEHOLDER_ECR_URI
+    newName: PLACEHOLDER_ECR_URI
+    newTag: v1.0.0
+
+# Environment-specific replica count
+replicas:
+  - name: pantry-pal
+    count: 1

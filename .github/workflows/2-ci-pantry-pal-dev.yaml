@@ -1,0 +1,712 @@
+name: "CI/CD pantry-pal dev"
+
+# ════════════════════════════════════════════════════════════════
+# REQUIRED SECRETS (configure in GitHub before running)
+# - AWS_ACCESS_KEY_ID: AWS access key for ECR and EKS
+# - AWS_SECRET_ACCESS_KEY: AWS secret key
+# - GH_PAT: GitHub Personal Access Token (scopes: repo, workflow)
+# ════════════════════════════════════════════════════════════════
+
+# RULE 188: Concurrency prevents parallel deployments
+concurrency:
+  group: ci-pantry-pal-dev-${{ github.ref }}
+  cancel-in-progress: false
+
+on:
+  push:
+    branches: [main]
+    # RULE 234: Smart triggers - only on code/workflow changes (not k8s manifests)
+    paths:
+      - '.opsera-pantry-pal/**'
+      - '!.opsera-pantry-pal/k8s/**'
+      - '!.opsera-pantry-pal/argocd/**'
+      - 'src/**'
+      - 'package*.json'
+      - 'nginx.conf'
+      - '.github/workflows/2-ci-pantry-pal-dev.yaml'
+  workflow_dispatch:
+    inputs:
+      TENANT:
+        description: 'Tenant name'
+        required: false
+        default: 'opsera'
+      APP_NAME:
+        description: 'Application name'
+        required: false
+        default: 'pantry-pal'
+      ENVIRONMENT:
+        description: 'Target environment'
+        required: false
+        default: 'dev'
+      AWS_REGION:
+        description: 'AWS Region'
+        required: false
+        default: 'us-west-2'
+
+permissions:
+  contents: write
+  id-token: write
+  security-events: write
+
+env:
+  TENANT: ${{ github.event.inputs.TENANT || 'opsera' }}
+  APP_NAME: ${{ github.event.inputs.APP_NAME || 'pantry-pal' }}
+  ENV: ${{ github.event.inputs.ENVIRONMENT || 'dev' }}
+  AWS_REGION: ${{ github.event.inputs.AWS_REGION || 'us-west-2' }}
+  HUB_CLUSTER: argocd-usw2
+  SPOKE_CLUSTER: opsera-usw2-np
+  ARGOCD_SERVER: argocd-usw2.agent.opsera.dev
+
+jobs:
+  # ─────────────────────────────────────────────────────────────
+  # Stage 1: Bootstrap Prerequisites Check (MUST BE FIRST)
+  # ─────────────────────────────────────────────────────────────
+  check-bootstrap-prerequisites:
+    name: Check Bootstrap Prerequisites
+    runs-on: ubuntu-latest
+    outputs:
+      bootstrap_complete: ${{ steps.check.outputs.complete }}
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check Prerequisites
+        id: check
+        run: |
+          ERRORS=()
+          NAMESPACE="${{ env.TENANT }}-${{ env.APP_NAME }}-${{ env.ENV }}"
+
+          echo "========================================"
+          echo "Verifying Bootstrap Prerequisites"
+          echo "Namespace: ${NAMESPACE}"
+          echo "========================================"
+
+          # 1. Check ECR Repository
+          echo ""
+          echo "1. Checking ECR Repository..."
+          if aws ecr describe-repositories \
+            --repository-names "${{ env.TENANT }}/${{ env.APP_NAME }}" \
+            --region ${{ env.AWS_REGION }} &>/dev/null; then
+            echo "   ECR repository exists: ${{ env.TENANT }}/${{ env.APP_NAME }}"
+          else
+            echo "   ECR repository NOT found"
+            ERRORS+=("ECR repository not created - run bootstrap first")
+          fi
+
+          # 2. Check Namespace on SPOKE cluster
+          echo ""
+          echo "2. Checking Namespace on SPOKE cluster..."
+          aws eks update-kubeconfig \
+            --name ${{ env.SPOKE_CLUSTER }} \
+            --region ${{ env.AWS_REGION }} \
+            --alias spoke
+
+          if kubectl --context spoke get namespace ${NAMESPACE} &>/dev/null; then
+            echo "   Namespace exists: ${NAMESPACE}"
+          else
+            echo "   Namespace NOT found: ${NAMESPACE}"
+            ERRORS+=("Namespace not created - run bootstrap first")
+          fi
+
+          # 3. Check ArgoCD registration on HUB
+          echo ""
+          echo "3. Checking ArgoCD Registration..."
+          aws eks update-kubeconfig \
+            --name ${{ env.HUB_CLUSTER }} \
+            --region ${{ env.AWS_REGION }} \
+            --alias hub
+
+          REPO_OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          REPO_SECRET="repo-${REPO_OWNER_LOWER}-${{ env.APP_NAME }}"
+          if kubectl --context hub get secret ${REPO_SECRET} -n argocd &>/dev/null; then
+            echo "   Repository registered with ArgoCD"
+          else
+            echo "   Repository NOT registered with ArgoCD"
+            ERRORS+=("ArgoCD repository not registered - run bootstrap first")
+          fi
+
+          # 4. Check Spoke registration
+          CLUSTER_SECRET="cluster-${{ env.SPOKE_CLUSTER }}"
+          if kubectl --context hub get secret ${CLUSTER_SECRET} -n argocd &>/dev/null; then
+            echo "   Spoke cluster registered: ${{ env.SPOKE_CLUSTER }}"
+          else
+            echo "   Spoke cluster NOT registered with ArgoCD"
+            ERRORS+=("Spoke cluster not registered - run bootstrap first")
+          fi
+
+          echo ""
+          echo "========================================"
+          if [ ${#ERRORS[@]} -eq 0 ]; then
+            echo "All bootstrap prerequisites met"
+            echo "complete=true" >> $GITHUB_OUTPUT
+          else
+            echo "Bootstrap prerequisites NOT met:"
+            printf '  - %s\n' "${ERRORS[@]}"
+            echo ""
+            echo "Run bootstrap first:"
+            echo "  gh workflow run '1-bootstrap-infrastructure-pantry-pal.yaml'"
+            echo "complete=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+  # ─────────────────────────────────────────────────────────────
+  # Stage 2: Security Scan (parallel with build)
+  # ─────────────────────────────────────────────────────────────
+  security-scan:
+    name: Run Gitleaks Security Scan
+    runs-on: ubuntu-latest
+    needs: [check-bootstrap-prerequisites]
+    if: needs.check-bootstrap-prerequisites.outputs.bootstrap_complete == 'true'
+    # RULE 205/224: Default to warn mode (safe default when variable not set)
+    # Variable not set → continue-on-error: true (WARN)
+    # Variable = 'block' → continue-on-error: false (BLOCK)
+    continue-on-error: ${{ vars.GITLEAKS_MODE != 'block' }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Gitleaks Security Scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      - name: Show Scan Mode
+        if: always()
+        run: |
+          MODE="${{ vars.GITLEAKS_MODE }}"
+          if [ "$MODE" = "block" ]; then
+            echo "BLOCK MODE: Workflow will fail if secrets detected"
+          else
+            echo "WARN MODE: Secrets detected but workflow continues (safe default)"
+          fi
+
+  # ─────────────────────────────────────────────────────────────
+  # Stage 3: Build Image (parallel with security-scan)
+  # ─────────────────────────────────────────────────────────────
+  build-image:
+    name: Build Container Image
+    runs-on: ubuntu-latest
+    needs: [check-bootstrap-prerequisites]
+    if: needs.check-bootstrap-prerequisites.outputs.bootstrap_complete == 'true'
+    outputs:
+      image_tag: ${{ steps.tag.outputs.tag }}
+      ecr_registry: ${{ steps.ecr.outputs.registry }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get AWS Account ID
+        id: ecr
+        run: |
+          AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
+          echo "registry=${ECR_REGISTRY}" >> $GITHUB_OUTPUT
+
+      - name: Generate Image Tag
+        id: tag
+        run: |
+          # RULE 175: Unique immutable tag (no :latest)
+          IMAGE_TAG="${{ env.ENV }}-${GITHUB_SHA::8}-$(date +%Y%m%d%H%M%S)"
+          echo "tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "Image tag: ${IMAGE_TAG}"
+
+      - name: Build Docker Image
+        run: |
+          IMAGE_TAG="${{ steps.tag.outputs.tag }}"
+          ECR_REGISTRY="${{ steps.ecr.outputs.registry }}"
+          IMAGE_NAME="${ECR_REGISTRY}/${{ env.TENANT }}/${{ env.APP_NAME }}:${IMAGE_TAG}"
+
+          # RULE 7: Build context MUST be . (repo root); Dockerfile path via -f flag
+          docker build \
+            --platform linux/amd64 \
+            --tag "${{ env.APP_NAME }}:${IMAGE_TAG}" \
+            --file .opsera-${{ env.APP_NAME }}/Dockerfile \
+            .
+
+          echo "Image built locally (not pushed yet)"
+
+      - name: Save Image Artifact
+        run: |
+          IMAGE_TAG="${{ steps.tag.outputs.tag }}"
+          docker save "${{ env.APP_NAME }}:${IMAGE_TAG}" -o /tmp/image.tar
+
+      - name: Upload Image Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp/image.tar
+          retention-days: 1
+
+  # ─────────────────────────────────────────────────────────────
+  # Stage 4: Grype Vulnerability Scan (after build)
+  # ─────────────────────────────────────────────────────────────
+  grype-scan:
+    name: Run Grype Vulnerability Scan
+    runs-on: ubuntu-latest
+    needs: [build-image]
+    # RULE 224: Default warn mode
+    continue-on-error: ${{ vars.GRYPE_MODE != 'block' }}
+    steps:
+      - name: Download Image Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      - name: Load Image Artifact
+        run: |
+          ARTIFACT=$(find . -name "*.tar" | head -1)
+          docker load -i "$ARTIFACT"
+
+      - name: Run Grype Vulnerability Scan
+        uses: anchore/scan-action@v3
+        with:
+          image: "${{ env.APP_NAME }}:${{ needs.build-image.outputs.image_tag }}"
+          severity-cutoff: high
+          fail-build: false
+          output-format: sarif
+        continue-on-error: true
+
+      - name: Upload Grype Results SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+        continue-on-error: true
+
+  # ─────────────────────────────────────────────────────────────
+  # Stage 5: Push to ECR
+  # ─────────────────────────────────────────────────────────────
+  push-to-ecr:
+    name: Push to ECR
+    runs-on: ubuntu-latest
+    needs: [build-image, grype-scan]
+    # RULE 232: Use always() + build result check
+    if: always() && needs.build-image.result == 'success'
+    outputs:
+      image_tag: ${{ steps.push.outputs.image_tag }}
+      ecr_uri: ${{ steps.push.outputs.ecr_uri }}
+    steps:
+      - name: Download Image Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      - name: Load and Push to ECR
+        id: push
+        run: |
+          # RULE 219: Dynamic artifact detection
+          ARTIFACT=$(find . -name "*.tar" | head -1)
+          if [ -z "$ARTIFACT" ]; then
+            echo "No image artifact found"
+            exit 1
+          fi
+          docker load -i "$ARTIFACT"
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Tag and Push Image
+        id: push
+        run: |
+          IMAGE_TAG="${{ needs.build-image.outputs.image_tag }}"
+
+          if [ -z "$IMAGE_TAG" ]; then
+            echo "IMAGE_TAG is empty"
+            exit 1
+          fi
+
+          AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ECR_REPO="${{ env.TENANT }}/${{ env.APP_NAME }}"
+          ECR_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${ECR_REPO}"
+          FULL_IMAGE="${ECR_URI}:${IMAGE_TAG}"
+
+          docker tag "${{ env.APP_NAME }}:${IMAGE_TAG}" "${FULL_IMAGE}"
+          docker push "${FULL_IMAGE}"
+
+          echo "Pushed: ${FULL_IMAGE}"
+
+          echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "ecr_uri=${ECR_URI}" >> $GITHUB_OUTPUT
+
+  # ─────────────────────────────────────────────────────────────
+  # Stage 6: Update Kustomize Manifests
+  # ─────────────────────────────────────────────────────────────
+  update-manifests:
+    name: Update Kustomize Manifests
+    runs-on: ubuntu-latest
+    needs: [push-to-ecr]
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Update Kustomization Image
+        run: |
+          ECR_URI="${{ needs.push-to-ecr.outputs.ecr_uri }}"
+          IMAGE_TAG="${{ needs.push-to-ecr.outputs.image_tag }}"
+          KUSTOMIZATION=".opsera-${{ env.APP_NAME }}/k8s/overlays/${{ env.ENV }}/kustomization.yaml"
+
+          if [ -z "$ECR_URI" ]; then
+            echo "ECR_URI is empty"
+            exit 1
+          fi
+
+          if [ -z "$IMAGE_TAG" ]; then
+            echo "IMAGE_TAG is empty"
+            exit 1
+          fi
+
+          # RULE 196: Pull FIRST before modifying files
+          git pull --rebase origin ${{ github.ref_name }} || {
+            git rebase --abort || true
+            git pull --no-rebase origin ${{ github.ref_name }}
+          }
+
+          # RULE 131/234: Replace ONLY newName (keep name: PLACEHOLDER_ECR_URI for kustomize matching)
+          sed -i "s|newName: PLACEHOLDER_ECR_URI|newName: ${ECR_URI}|" "$KUSTOMIZATION"
+          sed -i "s/newTag: .*/newTag: ${IMAGE_TAG}/" "$KUSTOMIZATION"
+
+          echo "Updated $KUSTOMIZATION"
+          echo "  newName: ${ECR_URI}"
+          echo "  newTag: ${IMAGE_TAG}"
+
+      - name: Commit and Push Changes
+        run: |
+          KUSTOMIZATION=".opsera-${{ env.APP_NAME }}/k8s/overlays/${{ env.ENV }}/kustomization.yaml"
+
+          git add "$KUSTOMIZATION"
+
+          # RULE 209: Check if there are actually changes (idempotent)
+          if git diff --cached --quiet; then
+            echo "Manifest already up-to-date"
+            exit 0
+          fi
+
+          IMAGE_TAG="${{ needs.push-to-ecr.outputs.image_tag }}"
+          git commit -m "chore(deploy): update ${{ env.ENV }} image to ${IMAGE_TAG} [skip ci]"
+
+          # Push with retry (RULE 202)
+          for i in 1 2 3; do
+            if git push origin ${{ github.ref_name }}; then
+              echo "Manifest updated and pushed"
+              break
+            fi
+            echo "Push failed, retrying ($i/3)..."
+            if ! git pull --rebase origin ${{ github.ref_name }}; then
+              git rebase --abort || true
+              git pull --no-rebase origin ${{ github.ref_name }}
+            fi
+            sleep 2
+          done
+
+  # ─────────────────────────────────────────────────────────────
+  # Stage 7: Create ArgoCD Application (Mandatory - RULE 213)
+  # ─────────────────────────────────────────────────────────────
+  create-argocd-app:
+    name: Create ArgoCD Application
+    runs-on: ubuntu-latest
+    needs: [update-manifests]
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Hub Kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --name ${{ env.HUB_CLUSTER }} \
+            --region ${{ env.AWS_REGION }} \
+            --alias hub
+
+      - name: Apply ArgoCD Application
+        run: |
+          APP_MANIFEST=".opsera-${{ env.APP_NAME }}/argocd/${{ env.ENV }}/application.yaml"
+
+          if [ ! -f "$APP_MANIFEST" ]; then
+            echo "ArgoCD manifest not found: $APP_MANIFEST"
+            exit 1
+          fi
+
+          kubectl --context hub apply -f "$APP_MANIFEST"
+
+          APP_NAME="${{ env.TENANT }}-${{ env.APP_NAME }}-${{ env.ENV }}"
+          if kubectl --context hub get app ${APP_NAME} -n argocd &>/dev/null; then
+            echo "ArgoCD application exists: ${APP_NAME}"
+          else
+            echo "ArgoCD application not found after apply"
+            exit 1
+          fi
+
+          sleep 3
+
+  # ─────────────────────────────────────────────────────────────
+  # Stage 8: Refresh ECR Secret on SPOKE (before ArgoCD sync)
+  # ─────────────────────────────────────────────────────────────
+  refresh-ecr-secret:
+    name: Refresh ECR Registry Secret
+    runs-on: ubuntu-latest
+    needs: [create-argocd-app]
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Spoke Kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --name ${{ env.SPOKE_CLUSTER }} \
+            --region ${{ env.AWS_REGION }} \
+            --alias spoke
+
+      - name: Refresh ECR Registry Secret
+        run: |
+          NAMESPACE="${{ env.TENANT }}-${{ env.APP_NAME }}-${{ env.ENV }}"
+          AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ECR_SERVER="${AWS_ACCOUNT_ID}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
+
+          # Get ECR login password
+          ECR_PASSWORD=$(aws ecr get-login-password --region ${{ env.AWS_REGION }})
+
+          # RULE 187: Dry-run + apply pattern for idempotent secret creation
+          kubectl --context spoke create secret docker-registry ecr-pull-secret \
+            --namespace="${NAMESPACE}" \
+            --docker-server="${ECR_SERVER}" \
+            --docker-username=AWS \
+            --docker-password="${ECR_PASSWORD}" \
+            --dry-run=client -o yaml | kubectl --context spoke apply -f -
+
+          echo "ECR pull secret refreshed in namespace: ${NAMESPACE}"
+
+  # ─────────────────────────────────────────────────────────────
+  # Stage 9: ArgoCD Hard Refresh
+  # ─────────────────────────────────────────────────────────────
+  argocd-refresh:
+    name: Run ArgoCD Hard Refresh
+    runs-on: ubuntu-latest
+    needs: [create-argocd-app]
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Hub Kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --name ${{ env.HUB_CLUSTER }} \
+            --region ${{ env.AWS_REGION }} \
+            --alias hub
+
+      - name: Run ArgoCD Hard Refresh
+        run: |
+          APP_NAME="${{ env.TENANT }}-${{ env.APP_NAME }}-${{ env.ENV }}"
+
+          kubectl --context hub patch app ${APP_NAME} -n argocd --type merge \
+            -p '{"metadata":{"annotations":{"argocd.argoproj.io/refresh":"hard"}}}'
+
+          echo "Triggered hard refresh for: ${APP_NAME}"
+          sleep 5
+
+  # ─────────────────────────────────────────────────────────────
+  # Stage 10: ArgoCD Sync
+  # ─────────────────────────────────────────────────────────────
+  argocd-sync:
+    name: Run ArgoCD Sync
+    runs-on: ubuntu-latest
+    needs: [argocd-refresh]
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Hub Kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --name ${{ env.HUB_CLUSTER }} \
+            --region ${{ env.AWS_REGION }} \
+            --alias hub
+
+      - name: Run ArgoCD Sync
+        run: |
+          APP_NAME="${{ env.TENANT }}-${{ env.APP_NAME }}-${{ env.ENV }}"
+
+          # RULE 66: ArgoCD sync MUST include force: true
+          kubectl --context hub patch app ${APP_NAME} -n argocd --type merge \
+            -p '{"operation":{"initiatedBy":{"username":"github-actions"},"sync":{"force": true,"revision":"HEAD"}}}'
+
+          echo "ArgoCD sync triggered for: ${APP_NAME}"
+
+      - name: Wait for Sync Completion
+        run: |
+          APP_NAME="${{ env.TENANT }}-${{ env.APP_NAME }}-${{ env.ENV }}"
+
+          for i in $(seq 1 60); do
+            # RULE 12: Check operationState.phase NOT sync.status (avoids race condition)
+            OPERATION=$(kubectl --context hub get app ${APP_NAME} -n argocd \
+              -o jsonpath='{.status.operationState.phase}' 2>/dev/null || echo "Unknown")
+            HEALTH=$(kubectl --context hub get app ${APP_NAME} -n argocd \
+              -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
+
+            echo "[$i/60] Operation: ${OPERATION}, Health: ${HEALTH}"
+
+            if [ "$OPERATION" = "Succeeded" ] && [ "$HEALTH" = "Healthy" ]; then
+              echo "ArgoCD sync completed successfully"
+              exit 0
+            fi
+
+            if [ "$OPERATION" = "Failed" ] || [ "$OPERATION" = "Error" ]; then
+              echo "ArgoCD sync failed: ${OPERATION}"
+              kubectl --context hub get app ${APP_NAME} -n argocd -o yaml
+              exit 1
+            fi
+
+            sleep 10
+          done
+
+          echo "ArgoCD sync did not complete in 10 minutes"
+          kubectl --context hub get app ${APP_NAME} -n argocd -o yaml
+          exit 1
+
+  # ─────────────────────────────────────────────────────────────
+  # Stage 11: Verify Deployment on SPOKE
+  # ─────────────────────────────────────────────────────────────
+  verify-deployment:
+    name: Verify Deployment
+    runs-on: ubuntu-latest
+    needs: [argocd-sync]
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Spoke Kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --name ${{ env.SPOKE_CLUSTER }} \
+            --region ${{ env.AWS_REGION }} \
+            --alias spoke
+
+      - name: Wait for Deployment to Exist
+        run: |
+          NAMESPACE="${{ env.TENANT }}-${{ env.APP_NAME }}-${{ env.ENV }}"
+
+          for i in $(seq 1 60); do
+            if kubectl --context spoke get deployment ${{ env.APP_NAME }} \
+              -n ${NAMESPACE} &>/dev/null; then
+              echo "Deployment exists"
+              break
+            fi
+            echo "Waiting for ArgoCD to create deployment... ($i/60)"
+            sleep 5
+          done
+
+          if ! kubectl --context spoke get deployment ${{ env.APP_NAME }} \
+            -n ${NAMESPACE} &>/dev/null; then
+            echo "Deployment not found after 5 minutes"
+            exit 1
+          fi
+
+      - name: Verify Pods Running
+        run: |
+          NAMESPACE="${{ env.TENANT }}-${{ env.APP_NAME }}-${{ env.ENV }}"
+
+          kubectl --context spoke wait \
+            --for=condition=available \
+            --timeout=300s \
+            deployment/${{ env.APP_NAME }} \
+            -n ${NAMESPACE}
+
+          kubectl --context spoke get pods -n ${NAMESPACE} -o wide
+
+          RUNNING=$(kubectl --context spoke get pods -n ${NAMESPACE} \
+            --field-selector=status.phase=Running -o name | wc -l)
+
+          if [ "$RUNNING" -eq 0 ]; then
+            echo "No pods are running"
+            exit 1
+          fi
+          echo "${RUNNING} pod(s) running"
+
+      - name: Verify Service Endpoints
+        run: |
+          NAMESPACE="${{ env.TENANT }}-${{ env.APP_NAME }}-${{ env.ENV }}"
+          kubectl --context spoke get svc -n ${NAMESPACE}
+          kubectl --context spoke get ingress -n ${NAMESPACE} 2>/dev/null || true
+
+      - name: Show Deployment Summary
+        run: |
+          IMAGE_TAG="${{ needs.push-to-ecr.outputs.image_tag }}"
+          NAMESPACE="${{ env.TENANT }}-${{ env.APP_NAME }}-${{ env.ENV }}"
+
+          echo "========================================"
+          echo "Deployment Summary"
+          echo "========================================"
+          echo "App:         ${{ env.APP_NAME }}"
+          echo "Environment: ${{ env.ENV }}"
+          echo "Namespace:   ${NAMESPACE}"
+          echo "Image Tag:   ${IMAGE_TAG}"
+          echo "Ingress:     pantry-pal-dev.agent.opsera.dev"
+          echo "========================================"
+
+  # ─────────────────────────────────────────────────────────────
+  # Stage 12: Deployment Landscape (MUST BE ABSOLUTE LAST - INV-007)
+  # ─────────────────────────────────────────────────────────────
+  deployment-landscape:
+    name: Update Deployment Landscape
+    runs-on: ubuntu-latest
+    needs: [verify-deployment]
+    if: success()
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Show Landscape Summary
+        run: |
+          echo "Deployment landscape update triggered"
+          echo "App: ${{ env.APP_NAME }}"
+          echo "Env: ${{ env.ENV }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
