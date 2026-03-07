@@ -593,6 +593,16 @@ jobs:
               exit 0
             fi
 
+            # ComparisonError is transient (GitHub API hiccup during ArgoCD polling)
+            # Only fail on actual OperationError/Failed — wait through ComparisonError
+            CONDITIONS=$(kubectl --context hub get app ${APP_NAME} -n argocd \
+              -o jsonpath='{.status.conditions[*].type}' 2>/dev/null || echo "")
+            if echo "$CONDITIONS" | grep -q "ComparisonError"; then
+              echo "  (transient ComparisonError — ArgoCD will self-recover, continuing to wait)"
+              sleep 10
+              continue
+            fi
+
             if [ "$OPERATION" = "Failed" ] || [ "$OPERATION" = "Error" ]; then
               echo "ArgoCD sync failed: ${OPERATION}"
               kubectl --context hub get app ${APP_NAME} -n argocd -o yaml
