@@ -21,7 +21,7 @@ labels:
 images:
   - name: PLACEHOLDER_ECR_URI
     newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/opsera/pantry-pal
-    newTag: dev-bd1fd86d-20260315071946
+    newTag: dev-82297f13-20260315072348
 
 # Environment-specific replica count
 replicas:
