@@ -30,7 +30,7 @@ const Index = () => {
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-xl font-bold text-foreground tracking-tight">🪷 GroceryTrack</h1>
-              <p className="text-xs text-muted-foreground">For your South Indian kitchen</p>
+              <p className="text-xs text-muted-foreground">Your personal kitchen manager</p>
             </div>
             {lowStockItems.length > 0 && (
               <Button
